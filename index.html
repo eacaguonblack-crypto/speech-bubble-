@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Frutiger Aero Speech Cam (Face Tracked)</title>
+    <title>Frutiger Aero Speech Cam (Side Bubble)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -38,7 +38,7 @@
             overflow: hidden;
         }
 
-        #videoFeed { display: none; } /* Hidden, we process frames into canvas */
+        #videoFeed { display: none; }
 
         #canvasOut {
             display: block;
@@ -50,7 +50,9 @@
         .controls {
             margin-top: 25px;
             display: flex;
-            gap: 20px;
+            gap: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
         }
 
         button {
@@ -76,6 +78,7 @@
 
         #btnStart { background-color: #2ecc71; }
         #btnCapture { background-color: #e74c3c; }
+        #btnClear { background-color: #f39c12; }
 
         #btnCapture:disabled {
             filter: grayscale(80%);
@@ -102,18 +105,19 @@
 </head>
 <body>
 
-    <h2>Frutiger Aero Speech Cam (Face Tracking)</h2>
+    <h2>Aero Speech Cam (Side View)</h2>
     
     <div class="container">
         <video id="videoFeed" playsinline muted></video>
         <canvas id="canvasOut"></canvas>
     </div>
 
-    <div class="status" id="statusMsg">Waiting for start...</div>
+    <div class="status" id="statusMsg">Waiting to start...</div>
 
     <div class="controls">
         <button id="btnStart" onclick="startApp()">🟢 Start System</button>
-        <button id="btnCapture" onclick="captureMoment()" disabled>📸 Capture Aero Moment</button>
+        <button id="btnClear" onclick="clearText()">🧹 Clear Text</button>
+        <button id="btnCapture" onclick="captureMoment()" disabled>📸 Capture Moment</button>
     </div>
 
     <script>
@@ -128,8 +132,7 @@
         // State Variables
         let isRunning = false;
         let isRecording = false;
-        let currentText = "Welcome to Aero.";
-        let lastSpeechTime = Date.now();
+        let currentText = "Stand to one side to see the effect.";
         let stream = null;
         let recognition = null;
         let mediaRecorder = null;
@@ -138,16 +141,15 @@
         
         // Face Tracking Variables
         let faceMesh = null;
-        let mouthPosition = { x: 640, y: 500 }; // Default center-ish
+        let mouthPosition = { x: 640, y: 500 }; 
         let lastFaceDetected = 0;
 
         // --- 1. Initialization ---
         async function startApp() {
             btnStart.disabled = true;
-            statusMsg.innerText = "Loading AI Models...";
+            statusMsg.innerText = "Loading Face Tracking...";
 
             try {
-                // Initialize MediaPipe FaceMesh
                 faceMesh = new FaceMesh({locateFile: (file) => {
                     return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
                 }});
@@ -161,8 +163,6 @@
 
                 faceMesh.onResults(onFaceResults);
 
-                // Initialize Camera
-                // We use MediaPipe's Camera utility for easier integration with their models
                 const camera = new Camera(video, {
                     onFrame: async () => {
                         if(isRunning && !isRecording) {
@@ -173,26 +173,23 @@
                     height: 720
                 });
                 
-                // Get Audio Stream separately (Camera util doesn't give audio)
+                // Get Audio
                 const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                stream = audioStream; // Store to combine later
+                stream = audioStream;
                 
                 await camera.start();
 
-                // Setup Canvas
                 canvas.width = 1280;
                 canvas.height = 720;
 
-                // Setup Speech
                 setupSpeech();
 
                 isRunning = true;
                 btnStart.style.display = 'none';
                 btnCapture.disabled = false;
-                statusMsg.innerText = "Tracking Face & Listening...";
-
-                // Start Manual Draw Loop (Camera util handles face logic, we handle painting)
-                drawLoop();
+                statusMsg.innerText = "Active. Speak clearly.";
+                
+                drawLoop(); // Keep the canvas alive
 
             } catch (err) {
                 console.error(err);
@@ -202,17 +199,16 @@
         }
 
         function onFaceResults(results) {
-            // Update mouth position if face detected
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 const landmarks = results.multiFaceLandmarks[0];
-                // Landmark 13 is generally the upper lip/mouth center
-                // Coordinates are normalized (0.0 - 1.0), so multiply by canvas size
+                // Landmark 14 is lower lip center, 13 is upper. 61 and 291 are mouth corners.
+                // Using 61 (left corner of mouth) or 291 (right) depending on side might be cool, 
+                // but let's stick to center (13) for stability.
                 mouthPosition.x = landmarks[13].x * canvas.width;
                 mouthPosition.y = landmarks[13].y * canvas.height;
                 lastFaceDetected = Date.now();
             }
 
-            // Draw the frame immediately after processing
             if (!isRecording) {
                 drawScene(results.image);
             }
@@ -220,42 +216,46 @@
 
         // --- 2. Drawing Logic ---
         function drawScene(videoImage) {
-            // Draw Video Frame
             ctx.clearRect(0,0, canvas.width, canvas.height);
             ctx.drawImage(videoImage, 0, 0, canvas.width, canvas.height);
 
-            // Retro scanline overlay
+            // Retro scanline
             ctx.fillStyle = 'rgba(0, 100, 255, 0.03)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Determine if we should show bubble (has text + face recently seen or default)
             const timeSinceFace = Date.now() - lastFaceDetected;
-            const faceActive = timeSinceFace < 1000; // Face seen in last second
+            const faceActive = timeSinceFace < 1500;
 
             if (currentText && currentText.trim() !== "") {
-                // If face lost, default to center bottom, else use mouth pos
                 let targetX = faceActive ? mouthPosition.x : canvas.width / 2;
                 let targetY = faceActive ? mouthPosition.y : canvas.height - 100;
                 
-                drawSmartBubble(ctx, currentText, targetX, targetY);
+                drawSideBubble(ctx, currentText, targetX, targetY);
             }
         }
 
-        // Fallback loop for when camera isn't sending frames (rare) or for recording ref
         function drawLoop() {
              if(isRecording) return; 
-             // MediaPipe drives the main loop via onResults, so this is just a placeholder
-             // However, we need 'requestAnimationFrame' active so the canvas stays alive
              animationId = requestAnimationFrame(drawLoop);
         }
 
-        // --- 3. Smart Positioning Bubble ---
-        function drawSmartBubble(ctx, text, mouthX, mouthY) {
+        function clearText() {
+            currentText = "";
+            if(recognition) {
+                // Restarting helps clear any internal buffer weirdness
+                try { recognition.stop(); } catch(e){}
+                // It will auto-restart via onend, or we can force it:
+                setTimeout(() => { if(isRunning && !isRecording) recognition.start(); }, 200);
+            }
+        }
+
+        // --- 3. Offset/Side Bubble Logic ---
+        function drawSideBubble(ctx, text, mouthX, mouthY) {
             ctx.font = "600 32px 'Segoe UI', Roboto, sans-serif";
-            const maxWidth = 500; // Slightly narrower for mobile friendliness
-            const lineHeight = 42;
+            const maxWidth = 450;
+            const lineHeight = 40;
             
-            // --- Text Wrapping ---
+            // Text Wrap
             const words = text.split(' ');
             let line = '';
             let lines = [];
@@ -271,51 +271,55 @@
             }
             lines.push(line);
 
-            // --- Calc Dimensions ---
-            const paddingH = 35;
+            // Dims
+            const paddingH = 30;
             const paddingV = 25;
             let maxLineWidth = 0;
             lines.forEach(l => {
                 let w = ctx.measureText(l).width;
                 if(w > maxLineWidth) maxLineWidth = w;
             });
-            
             const bWidth = maxLineWidth + (paddingH * 2);
             const bHeight = (lines.length * lineHeight) + (paddingV * 2);
 
-            // --- Smart Positioning (Clamping) ---
-            // Ideally, bubble is centered above mouth:
-            let bX = mouthX - (bWidth / 2);
-            let bY = mouthY - bHeight - 50; // 50px gap above mouth
+            // --- Determine Position (Left or Right of face) ---
+            const offsetDist = 180; // Distance from mouth center to bubble edge
+            let bX, bY;
+            let onRightSide = true;
 
-            // 1. Check Top Edge
-            if (bY < 10) {
-                // If hitting top, flip bubble to be BELOW mouth
-                bY = mouthY + 50; 
-                // We will need to draw tail pointing UP later
-                var isFlipped = true;
+            // If mouth is on the right side of screen (> center), put bubble on LEFT.
+            // If mouth is on left side of screen (< center), put bubble on RIGHT.
+            if (mouthX > canvas.width / 2) {
+                // Put bubble to the LEFT
+                bX = mouthX - offsetDist - bWidth;
+                onRightSide = false;
             } else {
-                var isFlipped = false;
+                // Put bubble to the RIGHT
+                bX = mouthX + offsetDist;
+                onRightSide = true;
             }
 
-            // 2. Check Left/Right Edges
-            if (bX < 10) bX = 10;
-            if (bX + bWidth > canvas.width - 10) bX = canvas.width - bWidth - 10;
+            // Vertical position: align bottom of bubble roughly with mouth (so it goes up)
+            bY = mouthY - bHeight + 50;
 
-            const cornerRadius = 35;
+            // --- Edge Clamping ---
+            if (bY < 20) bY = 20; // Don't go off top
+            if (bY + bHeight > canvas.height - 20) bY = canvas.height - bHeight - 20;
+            if (bX < 20) bX = 20;
+            if (bX + bWidth > canvas.width - 20) bX = canvas.width - bWidth - 20;
+
+            const cornerRadius = 30;
 
             ctx.save();
-
-            // --- Shadow ---
             ctx.shadowColor = 'rgba(0, 195, 255, 0.8)';
             ctx.shadowBlur = 25;
             ctx.shadowOffsetY = 5;
 
-            // --- Bubble Path ---
+            // --- Bubble Body ---
             ctx.beginPath();
             ctx.roundRect(bX, bY, bWidth, bHeight, cornerRadius);
 
-            // --- Gradient Fill ---
+            // Gradient
             let mainGrad = ctx.createLinearGradient(bX, bY, bX, bY + bHeight);
             mainGrad.addColorStop(0, 'rgba(235, 250, 255, 0.95)');   
             mainGrad.addColorStop(0.5, 'rgba(200, 240, 255, 0.85)'); 
@@ -323,28 +327,29 @@
             ctx.fillStyle = mainGrad;
             ctx.fill();
 
-            // --- Smart Tail ---
-            // Calculate anchor point on the bubble
-            // If normal (above mouth), anchor is bottom center of bubble relative to mouth
-            // But since bubble might be clamped X-wise, we clamp the anchor X too
-            let tailBaseX = Math.max(bX + 20, Math.min(mouthX, bX + bWidth - 20));
-
+            // --- Side Tail ---
             ctx.beginPath();
-            if (!isFlipped) {
-                // Tail points DOWN to mouth
-                ctx.moveTo(tailBaseX - 15, bY + bHeight - 5);
-                ctx.quadraticCurveTo(tailBaseX, mouthY - 10, tailBaseX + 25, mouthY - 10); // Point
-                ctx.quadraticCurveTo(tailBaseX + 15, bY + bHeight + 15, tailBaseX + 15, bY + bHeight - 5);
+            if (onRightSide) {
+                // Bubble is to the right of face, tail comes from Left side of bubble
+                let tailStartY = Math.min(bY + bHeight - 30, Math.max(bY + 30, mouthY));
+                
+                ctx.moveTo(bX + 2, tailStartY - 15); // Start on bubble edge
+                // Curve towards mouth
+                ctx.quadraticCurveTo(mouthX + 40, mouthY, mouthX, mouthY); 
+                // Curve back to bubble
+                ctx.quadraticCurveTo(mouthX + 50, mouthY + 20, bX + 2, tailStartY + 15);
             } else {
-                // Tail points UP to mouth
-                ctx.moveTo(tailBaseX - 15, bY + 5);
-                ctx.quadraticCurveTo(tailBaseX, mouthY + 10, tailBaseX + 25, mouthY + 10);
-                ctx.quadraticCurveTo(tailBaseX + 15, bY - 15, tailBaseX + 15, bY + 5);
+                // Bubble is to the left of face, tail comes from Right side of bubble
+                let tailStartY = Math.min(bY + bHeight - 30, Math.max(bY + 30, mouthY));
+                
+                ctx.moveTo(bX + bWidth - 2, tailStartY - 15); 
+                ctx.quadraticCurveTo(mouthX - 40, mouthY, mouthX, mouthY);
+                ctx.quadraticCurveTo(mouthX - 50, mouthY + 20, bX + bWidth - 2, tailStartY + 15);
             }
             ctx.fillStyle = mainGrad;
             ctx.fill();
 
-            // --- Highlight (Gloss) ---
+            // --- Highlight ---
             ctx.shadowColor = 'transparent';
             const highlightHeight = bHeight * 0.45;
             ctx.beginPath();
@@ -360,8 +365,9 @@
             // --- Border ---
             ctx.lineWidth = 3;
             ctx.strokeStyle = 'rgba(100, 200, 255, 0.6)';
-            ctx.stroke(); // Draws stroke for whatever path is active (the gloss), which is wrong. 
-            // Fix: Re-add path for border
+            ctx.stroke(); // Stroke highlight (accidentally) - fix below
+            
+            // Re-stroke main body properly
             ctx.beginPath();
             ctx.roundRect(bX, bY, bWidth, bHeight, cornerRadius);
             ctx.stroke();
@@ -375,7 +381,6 @@
             ctx.shadowColor = 'rgba(255,255,255,1)';
             ctx.shadowBlur = 4;
 
-            // Use the calculated center of the bubble for text X
             const textCenterX = bX + (bWidth / 2);
             const totalTextHeight = lines.length * lineHeight;
             const startTextY = bY + (bHeight - totalTextHeight)/2 + 2;
@@ -415,15 +420,12 @@
             if (isRecording) return;
             isRecording = true;
             
-            // Stop FaceMesh sending to canvas temporarily (freeze visual)
-            // But we keep the last frame on canvas
             if(recognition) recognition.stop();
 
-            btnCapture.innerHTML = "Recording Audio...";
+            btnCapture.innerHTML = "Recording...";
             btnCapture.classList.add("pulse");
-            statusMsg.innerText = "Processing Capture...";
+            statusMsg.innerText = "Capturing...";
 
-            // Combine Canvas Stream + Audio Stream
             const canvasStream = canvas.captureStream(30); 
             const audioTrack = stream.getAudioTracks()[0];
             if(audioTrack) canvasStream.addTrack(audioTrack);
@@ -443,7 +445,7 @@
         function stopCapture() {
             if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
             btnCapture.classList.remove("pulse");
-            btnCapture.innerHTML = "Processing File...";
+            btnCapture.innerHTML = "Processing...";
         }
 
         function saveVideo() {
@@ -453,12 +455,12 @@
             document.body.appendChild(a);
             a.style = 'display: none';
             a.href = url;
-            a.download = `AeroMoment_${Date.now()}.webm`; 
+            a.download = `AeroSide_${Date.now()}.webm`; 
             a.click();
             window.URL.revokeObjectURL(url);
 
-            statusMsg.innerText = "Saved. Resuming...";
-            btnCapture.innerHTML = "📸 Capture Aero Moment";
+            statusMsg.innerText = "Saved.";
+            btnCapture.innerHTML = "📸 Capture Moment";
             isRecording = false;
             if(recognition) try{recognition.start()}catch(e){}
         }
