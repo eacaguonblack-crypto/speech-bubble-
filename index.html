@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Frutiger Aero Speech Cam (Side Bubble)</title>
+    <title>Frutiger Aero Speech Cam (Multi-User)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -105,7 +105,7 @@
 </head>
 <body>
 
-    <h2>Aero Speech Cam (Side View)</h2>
+    <h2>Aero Speech Cam (Multi-User)</h2>
     
     <div class="container">
         <video id="videoFeed" playsinline muted></video>
@@ -132,22 +132,23 @@
         // State Variables
         let isRunning = false;
         let isRecording = false;
-        let currentText = "Stand to one side to see the effect.";
+        let currentText = "Bring a friend into frame!";
         let stream = null;
         let recognition = null;
         let mediaRecorder = null;
         let recordedChunks = [];
         let animationId;
         
-        // Face Tracking Variables
+        // Multi-Face Tracking State
         let faceMesh = null;
-        let mouthPosition = { x: 640, y: 500 }; 
-        let lastFaceDetected = 0;
-
+        let activeSpeakerIndex = -1; // -1 means no one specifically
+        let lastKnownSpeakerIndex = 0; // Default to first person found
+        let faces = []; // Store simplified face data
+        
         // --- 1. Initialization ---
         async function startApp() {
             btnStart.disabled = true;
-            statusMsg.innerText = "Loading Face Tracking...";
+            statusMsg.innerText = "Loading AI Models...";
 
             try {
                 faceMesh = new FaceMesh({locateFile: (file) => {
@@ -155,7 +156,7 @@
                 }});
                 
                 faceMesh.setOptions({
-                    maxNumFaces: 1,
+                    maxNumFaces: 4, // Track up to 4 people
                     refineLandmarks: true,
                     minDetectionConfidence: 0.5,
                     minTrackingConfidence: 0.5
@@ -187,9 +188,9 @@
                 isRunning = true;
                 btnStart.style.display = 'none';
                 btnCapture.disabled = false;
-                statusMsg.innerText = "Active. Speak clearly.";
+                statusMsg.innerText = "Active. Tracking speakers...";
                 
-                drawLoop(); // Keep the canvas alive
+                drawLoop(); 
 
             } catch (err) {
                 console.error(err);
@@ -199,14 +200,46 @@
         }
 
         function onFaceResults(results) {
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                const landmarks = results.multiFaceLandmarks[0];
-                // Landmark 14 is lower lip center, 13 is upper. 61 and 291 are mouth corners.
-                // Using 61 (left corner of mouth) or 291 (right) depending on side might be cool, 
-                // but let's stick to center (13) for stability.
-                mouthPosition.x = landmarks[13].x * canvas.width;
-                mouthPosition.y = landmarks[13].y * canvas.height;
-                lastFaceDetected = Date.now();
+            faces = [];
+            let maxMouthOpenness = 0;
+            let currentBestSpeaker = -1;
+
+            if (results.multiFaceLandmarks) {
+                // Iterate over ALL detected faces
+                results.multiFaceLandmarks.forEach((landmarks, index) => {
+                    // 1. Calculate Mouth Center
+                    const topLip = landmarks[13];
+                    const bottomLip = landmarks[14];
+                    const mouthX = topLip.x * canvas.width;
+                    const mouthY = topLip.y * canvas.height;
+
+                    // 2. Calculate "Openness" (Visual Voice Activity Detection)
+                    // We measure distance between upper lip (13) and lower lip (14)
+                    const openness = Math.abs(topLip.y - bottomLip.y);
+
+                    faces.push({
+                        id: index,
+                        x: mouthX,
+                        y: mouthY,
+                        openness: openness
+                    });
+
+                    // Check if this person is speaking more than anyone else
+                    // 0.01 is a sensitivity threshold (adjust if needed)
+                    if (openness > 0.015 && openness > maxMouthOpenness) {
+                        maxMouthOpenness = openness;
+                        currentBestSpeaker = index;
+                    }
+                });
+            }
+
+            // Update global active speaker if we found a clear candidate
+            if (currentBestSpeaker !== -1) {
+                activeSpeakerIndex = currentBestSpeaker;
+                lastKnownSpeakerIndex = currentBestSpeaker;
+            } else {
+                // If no one is clearly opening their mouth, stay with last known or none
+                activeSpeakerIndex = -1; 
             }
 
             if (!isRecording) {
@@ -219,18 +252,33 @@
             ctx.clearRect(0,0, canvas.width, canvas.height);
             ctx.drawImage(videoImage, 0, 0, canvas.width, canvas.height);
 
-            // Retro scanline
+            // Scanline effect
             ctx.fillStyle = 'rgba(0, 100, 255, 0.03)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            const timeSinceFace = Date.now() - lastFaceDetected;
-            const faceActive = timeSinceFace < 1500;
-
             if (currentText && currentText.trim() !== "") {
-                let targetX = faceActive ? mouthPosition.x : canvas.width / 2;
-                let targetY = faceActive ? mouthPosition.y : canvas.height - 100;
-                
-                drawSideBubble(ctx, currentText, targetX, targetY);
+                // Decide who gets the bubble
+                let targetFace = null;
+
+                // 1. Try to find the currently talking person
+                if (activeSpeakerIndex !== -1 && faces[activeSpeakerIndex]) {
+                    targetFace = faces[activeSpeakerIndex];
+                } 
+                // 2. Fallback: Use the last person who spoke
+                else if (lastKnownSpeakerIndex !== -1 && faces[lastKnownSpeakerIndex]) {
+                    targetFace = faces[lastKnownSpeakerIndex];
+                }
+                // 3. Fallback: Use the first person available
+                else if (faces.length > 0) {
+                    targetFace = faces[0];
+                }
+
+                if (targetFace) {
+                    drawSideBubble(ctx, currentText, targetFace.x, targetFace.y);
+                } else {
+                    // No faces found? Center it.
+                    drawSideBubble(ctx, currentText, canvas.width/2, canvas.height - 100);
+                }
             }
         }
 
@@ -241,21 +289,16 @@
 
         function clearText() {
             currentText = "";
-            if(recognition) {
-                // Restarting helps clear any internal buffer weirdness
-                try { recognition.stop(); } catch(e){}
-                // It will auto-restart via onend, or we can force it:
-                setTimeout(() => { if(isRunning && !isRecording) recognition.start(); }, 200);
-            }
+            if(recognition) try { recognition.stop(); } catch(e){}
+            setTimeout(() => { if(isRunning && !isRecording) recognition.start(); }, 200);
         }
 
-        // --- 3. Offset/Side Bubble Logic ---
+        // --- 3. Bubble Logic (Reused & Optimized) ---
         function drawSideBubble(ctx, text, mouthX, mouthY) {
             ctx.font = "600 32px 'Segoe UI', Roboto, sans-serif";
             const maxWidth = 450;
             const lineHeight = 40;
             
-            // Text Wrap
             const words = text.split(' ');
             let line = '';
             let lines = [];
@@ -271,7 +314,6 @@
             }
             lines.push(line);
 
-            // Dims
             const paddingH = 30;
             const paddingV = 25;
             let maxLineWidth = 0;
@@ -282,28 +324,23 @@
             const bWidth = maxLineWidth + (paddingH * 2);
             const bHeight = (lines.length * lineHeight) + (paddingV * 2);
 
-            // --- Determine Position (Left or Right of face) ---
-            const offsetDist = 180; // Distance from mouth center to bubble edge
+            const offsetDist = 180;
             let bX, bY;
             let onRightSide = true;
 
-            // If mouth is on the right side of screen (> center), put bubble on LEFT.
-            // If mouth is on left side of screen (< center), put bubble on RIGHT.
+            // Determine side based on screen position
             if (mouthX > canvas.width / 2) {
-                // Put bubble to the LEFT
                 bX = mouthX - offsetDist - bWidth;
                 onRightSide = false;
             } else {
-                // Put bubble to the RIGHT
                 bX = mouthX + offsetDist;
                 onRightSide = true;
             }
 
-            // Vertical position: align bottom of bubble roughly with mouth (so it goes up)
             bY = mouthY - bHeight + 50;
 
-            // --- Edge Clamping ---
-            if (bY < 20) bY = 20; // Don't go off top
+            // Clamp
+            if (bY < 20) bY = 20;
             if (bY + bHeight > canvas.height - 20) bY = canvas.height - bHeight - 20;
             if (bX < 20) bX = 20;
             if (bX + bWidth > canvas.width - 20) bX = canvas.width - bWidth - 20;
@@ -315,11 +352,9 @@
             ctx.shadowBlur = 25;
             ctx.shadowOffsetY = 5;
 
-            // --- Bubble Body ---
             ctx.beginPath();
             ctx.roundRect(bX, bY, bWidth, bHeight, cornerRadius);
 
-            // Gradient
             let mainGrad = ctx.createLinearGradient(bX, bY, bX, bY + bHeight);
             mainGrad.addColorStop(0, 'rgba(235, 250, 255, 0.95)');   
             mainGrad.addColorStop(0.5, 'rgba(200, 240, 255, 0.85)'); 
@@ -327,21 +362,15 @@
             ctx.fillStyle = mainGrad;
             ctx.fill();
 
-            // --- Side Tail ---
+            // Tail
             ctx.beginPath();
             if (onRightSide) {
-                // Bubble is to the right of face, tail comes from Left side of bubble
                 let tailStartY = Math.min(bY + bHeight - 30, Math.max(bY + 30, mouthY));
-                
-                ctx.moveTo(bX + 2, tailStartY - 15); // Start on bubble edge
-                // Curve towards mouth
+                ctx.moveTo(bX + 2, tailStartY - 15); 
                 ctx.quadraticCurveTo(mouthX + 40, mouthY, mouthX, mouthY); 
-                // Curve back to bubble
                 ctx.quadraticCurveTo(mouthX + 50, mouthY + 20, bX + 2, tailStartY + 15);
             } else {
-                // Bubble is to the left of face, tail comes from Right side of bubble
                 let tailStartY = Math.min(bY + bHeight - 30, Math.max(bY + 30, mouthY));
-                
                 ctx.moveTo(bX + bWidth - 2, tailStartY - 15); 
                 ctx.quadraticCurveTo(mouthX - 40, mouthY, mouthX, mouthY);
                 ctx.quadraticCurveTo(mouthX - 50, mouthY + 20, bX + bWidth - 2, tailStartY + 15);
@@ -349,7 +378,7 @@
             ctx.fillStyle = mainGrad;
             ctx.fill();
 
-            // --- Highlight ---
+            // Highlight
             ctx.shadowColor = 'transparent';
             const highlightHeight = bHeight * 0.45;
             ctx.beginPath();
@@ -362,19 +391,16 @@
             ctx.fillStyle = highlightGrad;
             ctx.fill();
 
-            // --- Border ---
+            // Stroke
             ctx.lineWidth = 3;
             ctx.strokeStyle = 'rgba(100, 200, 255, 0.6)';
-            ctx.stroke(); // Stroke highlight (accidentally) - fix below
-            
-            // Re-stroke main body properly
             ctx.beginPath();
             ctx.roundRect(bX, bY, bWidth, bHeight, cornerRadius);
             ctx.stroke();
 
             ctx.restore();
 
-            // --- Text ---
+            // Text
             ctx.fillStyle = '#003f5c'; 
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
@@ -415,7 +441,7 @@
             recognition.start();
         }
 
-        // --- 5. Recording Logic ---
+        // --- 5. Recording Logic (Same as before) ---
         function captureMoment() {
             if (isRecording) return;
             isRecording = true;
@@ -455,7 +481,7 @@
             document.body.appendChild(a);
             a.style = 'display: none';
             a.href = url;
-            a.download = `AeroSide_${Date.now()}.webm`; 
+            a.download = `AeroMultiUser_${Date.now()}.webm`; 
             a.click();
             window.URL.revokeObjectURL(url);
 
