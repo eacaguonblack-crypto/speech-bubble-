@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech Bubble Cam</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        h2 { margin-bottom: 10px; }
+
+        .container {
+            position: relative;
+            border: 4px solid #333;
+            border-radius: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            background: black;
+            overflow: hidden;
+        }
+
+        /* The hidden video element for raw feed */
+        #videoFeed {
+            display: none; 
+        }
+
+        /* The canvas where we draw the composite */
+        #canvasOut {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            background-color: #000;
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #btnStart {
+            background-color: #2ecc71;
+            color: white;
+        }
+
+        #btnCapture {
+            background-color: #e74c3c;
+            color: white;
+        }
+
+        #btnCapture:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .status {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #aaa;
+            height: 20px;
+        }
+
+        .pulse {
+            animation: pulse-animation 1.5s infinite;
+        }
+
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Live Speech Bubble Cam</h2>
+    
+    <div class="container">
+        <video id="videoFeed" playsinline autoplay muted></video>
+        <canvas id="canvasOut"></canvas>
+    </div>
+
+    <div class="status" id="statusMsg">Waiting for permissions...</div>
+
+    <div class="controls">
+        <button id="btnStart" onclick="startApp()">Start Camera & Mic</button>
+        <button id="btnCapture" onclick="captureMoment()" disabled>📸 Capture Moment</button>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const canvas = document.getElementById('canvasOut');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('videoFeed');
+        const statusMsg = document.getElementById('statusMsg');
+        const btnCapture = document.getElementById('btnCapture');
+        const btnStart = document.getElementById('btnStart');
+
+        let isRunning = false;
+        let isRecording = false;
+        let currentText = "Say something...";
+        let lastSpeechTime = Date.now();
+        let stream = null;
+        let recognition = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+
+        // Animation Loop Variable
+        let animationId;
+
+        // --- 1. Initialization: Camera & Speech ---
+        async function startApp() {
+            try {
+                // Get Camera & Mic
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1280, height: 720 }, 
+                    audio: true 
+                });
+                
+                video.srcObject = stream;
+                await video.play();
+
+                // Setup Canvas size to match video
+                canvas.width = 1280;
+                canvas.height = 720; // 720p aspect ratio
+
+                // Setup Speech Recognition
+                setupSpeech();
+
+                // Start Drawing Loop
+                isRunning = true;
+                drawLoop();
+
+                // UI Updates
+                btnStart.style.display = 'none';
+                btnCapture.disabled = false;
+                statusMsg.innerText = "Listening... Speak clearly.";
+
+            } catch (err) {
+                console.error(err);
+                statusMsg.innerText = "Error accessing camera/mic. Check permissions.";
+            }
+        }
+
+        function setupSpeech() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert("Your browser does not support Speech Recognition. Try Chrome.");
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        currentText = event.results[i][0].transcript;
+                        // Auto-clear text after 5 seconds if no new speech
+                        lastSpeechTime = Date.now();
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                if (interimTranscript) {
+                    currentText = interimTranscript;
+                    lastSpeechTime = Date.now();
+                }
+            };
+
+            recognition.onerror = (event) => {
+                console.warn("Speech error", event.error);
+            };
+
+            recognition.onend = () => {
+                if(isRunning) recognition.start(); // Restart if it stops
+            };
+
+            recognition.start();
+        }
+
+        // --- 2. The Visual Loop (Real-time Drawing) ---
+        function drawLoop() {
+            if (!isRunning) return;
+
+            // 1. Draw Video Frame
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // 2. Draw Speech Bubble
+            if (currentText && currentText.trim() !== "") {
+                drawSpeechBubble(ctx, currentText, canvas.width / 2, canvas.height - 150);
+            }
+
+            // Loop unless we are in "Capture Mode" (frozen state)
+            if (!isRecording) {
+                animationId = requestAnimationFrame(drawLoop);
+            }
+        }
+
+        // --- 3. Graphics: Drawing the Bubble ---
+        function drawSpeechBubble(ctx, text, x, y) {
+            ctx.font = "bold 30px sans-serif";
+            const maxWidth = 800;
+            const lineHeight = 40;
+            
+            // Text Wrapping
+            const words = text.split(' ');
+            let line = '';
+            let lines = [];
+
+            for(let n = 0; n < words.length; n++) {
+                let testLine = line + words[n] + ' ';
+                let metrics = ctx.measureText(testLine);
+                let testWidth = metrics.width;
+                if (testWidth > maxWidth && n > 0) {
+                    lines.push(line);
+                    line = words[n] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+
+            // Bubble Dimensions
+            const padding = 20;
+            const bubbleWidth = Math.min(ctx.measureText(text).width + (padding*2), maxWidth + (padding*2)); // rough est
+            // Better width calc based on longest line
+            let maxLineWidth = 0;
+            lines.forEach(l => {
+                let w = ctx.measureText(l).width;
+                if(w > maxLineWidth) maxLineWidth = w;
+            });
+            
+            const bWidth = maxLineWidth + (padding * 2);
+            const bHeight = (lines.length * lineHeight) + (padding * 2);
+            const bX = x - (bWidth / 2);
+            const bY = y - bHeight; // Grow upwards
+
+            // Draw Bubble Background
+            ctx.beginPath();
+            ctx.roundRect(bX, bY, bWidth, bHeight, 20);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.fill();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#000';
+            ctx.stroke();
+
+            // Draw Triangle tail
+            ctx.beginPath();
+            ctx.moveTo(x, bY + bHeight);
+            ctx.lineTo(x - 15, bY + bHeight + 20);
+            ctx.lineTo(x + 15, bY + bHeight);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw Text
+            ctx.fillStyle = '#000';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+
+            for (let k = 0; k < lines.length; k++) {
+                ctx.fillText(lines[k], x, bY + padding + (k * lineHeight));
+            }
+        }
+
+        // --- 4. Recording Logic (Photo with Audio) ---
+        function captureMoment() {
+            if (isRecording) return;
+            isRecording = true;
+            btnCapture.innerHTML = "Recording Audio...";
+            btnCapture.classList.add("pulse");
+            statusMsg.innerText = "Capturing photo + recording audio...";
+
+            // 1. Freeze the visual (Stop the draw loop)
+            cancelAnimationFrame(animationId);
+            // We do NOT clear the canvas. It now holds the "Photo" with the speech bubble.
+
+            // 2. Setup Recording Stream
+            // We need a stream that combines the Canvas (Video track) + Microphone (Audio track)
+            const canvasStream = canvas.captureStream(30); // 30 FPS
+            const audioTrack = stream.getAudioTracks()[0];
+            canvasStream.addTrack(audioTrack);
+
+            recordedChunks = [];
+            // Use webm as it is standard. naming it mp4 is risky but possible in some contexts, but let's stick to safe types.
+            const options = { mimeType: 'video/webm; codecs=vp9,opus' }; 
+            
+            try {
+                mediaRecorder = new MediaRecorder(canvasStream, options);
+            } catch (e) {
+                // Fallback for Safari/others
+                mediaRecorder = new MediaRecorder(canvasStream);
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = saveVideo;
+
+            // Start Recording
+            mediaRecorder.start();
+
+            // Stop automatically after 5 seconds (simulating a photo-moment with audio context)
+            setTimeout(() => {
+                stopCapture();
+            }, 5000);
+        }
+
+        function stopCapture() {
+            mediaRecorder.stop();
+            btnCapture.classList.remove("pulse");
+            btnCapture.innerHTML = "Processing...";
+            isRecording = false;
+        }
+
+        function saveVideo() {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            
+            // Create download link
+            const a = document.createElement('a');
+            document.body.appendChild(a);
+            a.style = 'display: none';
+            a.href = url;
+            a.download = 'speech-bubble-moment.webm'; // WebM is safest for browser generation
+            a.click();
+            window.URL.revokeObjectURL(url);
+
+            // Resume the app
+            statusMsg.innerText = "Saved! Resuming live feed...";
+            btnCapture.innerHTML = "📸 Capture Moment";
+            btnCapture.disabled = false;
+            
+            // Resume Drawing
+            drawLoop();
+        }
+
+    </script>
+</body>
+</html>
