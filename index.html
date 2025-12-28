@@ -3,112 +3,117 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Speech Bubble Cam</title>
+    <title>Frutiger Aero Speech Cam (Face Tracked)</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #1a1a1a;
+            background: linear-gradient(135deg, #004e92, #000428);
             color: white;
             display: flex;
             flex-direction: column;
             align-items: center;
             margin: 0;
             padding: 20px;
-            height: 100vh;
-            overflow: hidden;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
 
-        h2 { margin-bottom: 10px; }
+        h2 { 
+            margin-bottom: 10px;
+            text-shadow: 0 0 10px rgba(0, 195, 255, 0.7);
+        }
 
         .container {
             position: relative;
-            border: 4px solid #333;
-            border-radius: 8px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            border: 6px solid rgba(255, 255, 255, 0.3);
+            border-radius: 12px;
+            box-shadow: 
+                0 15px 35px rgba(0,0,0,0.5),
+                inset 0 0 20px rgba(0, 195, 255, 0.3);
             background: black;
             overflow: hidden;
         }
 
-        /* The hidden video element for raw feed */
-        #videoFeed {
-            display: none; 
-        }
+        #videoFeed { display: none; } /* Hidden, we process frames into canvas */
 
-        /* The canvas where we draw the composite */
         #canvasOut {
             display: block;
             max-width: 100%;
             height: auto;
-            background-color: #000;
+            border-radius: 6px;
         }
 
         .controls {
-            margin-top: 20px;
+            margin-top: 25px;
             display: flex;
-            gap: 15px;
+            gap: 20px;
         }
 
         button {
-            padding: 12px 24px;
+            padding: 12px 28px;
             font-size: 16px;
-            border: none;
-            border-radius: 50px;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-radius: 25px;
             cursor: pointer;
-            transition: all 0.2s;
             font-weight: bold;
             display: flex;
             align-items: center;
             gap: 8px;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            transition: all 0.2s;
+            background-image: linear-gradient(to bottom, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0.1) 50%, rgba(0,0,0,0.1) 51%, rgba(0,0,0,0.2) 100%);
+        }
+        
+        button:hover {
+             box-shadow: 0 6px 12px rgba(0, 195, 255, 0.4);
+             transform: translateY(-2px);
         }
 
-        #btnStart {
-            background-color: #2ecc71;
-            color: white;
-        }
-
-        #btnCapture {
-            background-color: #e74c3c;
-            color: white;
-        }
+        #btnStart { background-color: #2ecc71; }
+        #btnCapture { background-color: #e74c3c; }
 
         #btnCapture:disabled {
-            background-color: #555;
+            filter: grayscale(80%);
             cursor: not-allowed;
             opacity: 0.7;
         }
 
         .status {
-            margin-top: 10px;
+            margin-top: 15px;
             font-size: 14px;
-            color: #aaa;
+            color: #89cff0;
+            text-shadow: 0 0 5px rgba(0, 195, 255, 0.5);
             height: 20px;
+            text-align: center;
         }
 
-        .pulse {
-            animation: pulse-animation 1.5s infinite;
-        }
-
+        .pulse { animation: pulse-animation 1.5s infinite; }
         @keyframes pulse-animation {
-            0% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.4); }
-            70% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(238, 82, 83, 0.6); }
+            70% { box-shadow: 0 0 0 15px rgba(238, 82, 83, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(238, 82, 83, 0); }
         }
     </style>
 </head>
 <body>
 
-    <h2>Live Speech Bubble Cam</h2>
+    <h2>Frutiger Aero Speech Cam (Face Tracking)</h2>
     
     <div class="container">
-        <video id="videoFeed" playsinline autoplay muted></video>
+        <video id="videoFeed" playsinline muted></video>
         <canvas id="canvasOut"></canvas>
     </div>
 
-    <div class="status" id="statusMsg">Waiting for permissions...</div>
+    <div class="status" id="statusMsg">Waiting for start...</div>
 
     <div class="controls">
-        <button id="btnStart" onclick="startApp()">Start Camera & Mic</button>
-        <button id="btnCapture" onclick="captureMoment()" disabled>📸 Capture Moment</button>
+        <button id="btnStart" onclick="startApp()">🟢 Start System</button>
+        <button id="btnCapture" onclick="captureMoment()" disabled>📸 Capture Aero Moment</button>
     </div>
 
     <script>
@@ -120,58 +125,269 @@
         const btnCapture = document.getElementById('btnCapture');
         const btnStart = document.getElementById('btnStart');
 
+        // State Variables
         let isRunning = false;
         let isRecording = false;
-        let currentText = "Say something...";
+        let currentText = "Welcome to Aero.";
         let lastSpeechTime = Date.now();
         let stream = null;
         let recognition = null;
         let mediaRecorder = null;
         let recordedChunks = [];
-
-        // Animation Loop Variable
         let animationId;
+        
+        // Face Tracking Variables
+        let faceMesh = null;
+        let mouthPosition = { x: 640, y: 500 }; // Default center-ish
+        let lastFaceDetected = 0;
 
-        // --- 1. Initialization: Camera & Speech ---
+        // --- 1. Initialization ---
         async function startApp() {
+            btnStart.disabled = true;
+            statusMsg.innerText = "Loading AI Models...";
+
             try {
-                // Get Camera & Mic
-                stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 1280, height: 720 }, 
-                    audio: true 
+                // Initialize MediaPipe FaceMesh
+                faceMesh = new FaceMesh({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+                }});
+                
+                faceMesh.setOptions({
+                    maxNumFaces: 1,
+                    refineLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                faceMesh.onResults(onFaceResults);
+
+                // Initialize Camera
+                // We use MediaPipe's Camera utility for easier integration with their models
+                const camera = new Camera(video, {
+                    onFrame: async () => {
+                        if(isRunning && !isRecording) {
+                            await faceMesh.send({image: video});
+                        }
+                    },
+                    width: 1280,
+                    height: 720
                 });
                 
-                video.srcObject = stream;
-                await video.play();
+                // Get Audio Stream separately (Camera util doesn't give audio)
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream = audioStream; // Store to combine later
+                
+                await camera.start();
 
-                // Setup Canvas size to match video
+                // Setup Canvas
                 canvas.width = 1280;
-                canvas.height = 720; // 720p aspect ratio
+                canvas.height = 720;
 
-                // Setup Speech Recognition
+                // Setup Speech
                 setupSpeech();
 
-                // Start Drawing Loop
                 isRunning = true;
-                drawLoop();
-
-                // UI Updates
                 btnStart.style.display = 'none';
                 btnCapture.disabled = false;
-                statusMsg.innerText = "Listening... Speak clearly.";
+                statusMsg.innerText = "Tracking Face & Listening...";
+
+                // Start Manual Draw Loop (Camera util handles face logic, we handle painting)
+                drawLoop();
 
             } catch (err) {
                 console.error(err);
-                statusMsg.innerText = "Error accessing camera/mic. Check permissions.";
+                statusMsg.innerText = "Error initializing. Check console.";
+                btnStart.disabled = false;
             }
         }
 
-        function setupSpeech() {
-            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-                alert("Your browser does not support Speech Recognition. Try Chrome.");
-                return;
+        function onFaceResults(results) {
+            // Update mouth position if face detected
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+                // Landmark 13 is generally the upper lip/mouth center
+                // Coordinates are normalized (0.0 - 1.0), so multiply by canvas size
+                mouthPosition.x = landmarks[13].x * canvas.width;
+                mouthPosition.y = landmarks[13].y * canvas.height;
+                lastFaceDetected = Date.now();
             }
 
+            // Draw the frame immediately after processing
+            if (!isRecording) {
+                drawScene(results.image);
+            }
+        }
+
+        // --- 2. Drawing Logic ---
+        function drawScene(videoImage) {
+            // Draw Video Frame
+            ctx.clearRect(0,0, canvas.width, canvas.height);
+            ctx.drawImage(videoImage, 0, 0, canvas.width, canvas.height);
+
+            // Retro scanline overlay
+            ctx.fillStyle = 'rgba(0, 100, 255, 0.03)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Determine if we should show bubble (has text + face recently seen or default)
+            const timeSinceFace = Date.now() - lastFaceDetected;
+            const faceActive = timeSinceFace < 1000; // Face seen in last second
+
+            if (currentText && currentText.trim() !== "") {
+                // If face lost, default to center bottom, else use mouth pos
+                let targetX = faceActive ? mouthPosition.x : canvas.width / 2;
+                let targetY = faceActive ? mouthPosition.y : canvas.height - 100;
+                
+                drawSmartBubble(ctx, currentText, targetX, targetY);
+            }
+        }
+
+        // Fallback loop for when camera isn't sending frames (rare) or for recording ref
+        function drawLoop() {
+             if(isRecording) return; 
+             // MediaPipe drives the main loop via onResults, so this is just a placeholder
+             // However, we need 'requestAnimationFrame' active so the canvas stays alive
+             animationId = requestAnimationFrame(drawLoop);
+        }
+
+        // --- 3. Smart Positioning Bubble ---
+        function drawSmartBubble(ctx, text, mouthX, mouthY) {
+            ctx.font = "600 32px 'Segoe UI', Roboto, sans-serif";
+            const maxWidth = 500; // Slightly narrower for mobile friendliness
+            const lineHeight = 42;
+            
+            // --- Text Wrapping ---
+            const words = text.split(' ');
+            let line = '';
+            let lines = [];
+            for(let n = 0; n < words.length; n++) {
+                let testLine = line + words[n] + ' ';
+                let metrics = ctx.measureText(testLine);
+                if (metrics.width > maxWidth && n > 0) {
+                    lines.push(line);
+                    line = words[n] + ' ';
+                } else {
+                    line = testLine;
+                }
+            }
+            lines.push(line);
+
+            // --- Calc Dimensions ---
+            const paddingH = 35;
+            const paddingV = 25;
+            let maxLineWidth = 0;
+            lines.forEach(l => {
+                let w = ctx.measureText(l).width;
+                if(w > maxLineWidth) maxLineWidth = w;
+            });
+            
+            const bWidth = maxLineWidth + (paddingH * 2);
+            const bHeight = (lines.length * lineHeight) + (paddingV * 2);
+
+            // --- Smart Positioning (Clamping) ---
+            // Ideally, bubble is centered above mouth:
+            let bX = mouthX - (bWidth / 2);
+            let bY = mouthY - bHeight - 50; // 50px gap above mouth
+
+            // 1. Check Top Edge
+            if (bY < 10) {
+                // If hitting top, flip bubble to be BELOW mouth
+                bY = mouthY + 50; 
+                // We will need to draw tail pointing UP later
+                var isFlipped = true;
+            } else {
+                var isFlipped = false;
+            }
+
+            // 2. Check Left/Right Edges
+            if (bX < 10) bX = 10;
+            if (bX + bWidth > canvas.width - 10) bX = canvas.width - bWidth - 10;
+
+            const cornerRadius = 35;
+
+            ctx.save();
+
+            // --- Shadow ---
+            ctx.shadowColor = 'rgba(0, 195, 255, 0.8)';
+            ctx.shadowBlur = 25;
+            ctx.shadowOffsetY = 5;
+
+            // --- Bubble Path ---
+            ctx.beginPath();
+            ctx.roundRect(bX, bY, bWidth, bHeight, cornerRadius);
+
+            // --- Gradient Fill ---
+            let mainGrad = ctx.createLinearGradient(bX, bY, bX, bY + bHeight);
+            mainGrad.addColorStop(0, 'rgba(235, 250, 255, 0.95)');   
+            mainGrad.addColorStop(0.5, 'rgba(200, 240, 255, 0.85)'); 
+            mainGrad.addColorStop(1, 'rgba(160, 220, 255, 0.95)');    
+            ctx.fillStyle = mainGrad;
+            ctx.fill();
+
+            // --- Smart Tail ---
+            // Calculate anchor point on the bubble
+            // If normal (above mouth), anchor is bottom center of bubble relative to mouth
+            // But since bubble might be clamped X-wise, we clamp the anchor X too
+            let tailBaseX = Math.max(bX + 20, Math.min(mouthX, bX + bWidth - 20));
+
+            ctx.beginPath();
+            if (!isFlipped) {
+                // Tail points DOWN to mouth
+                ctx.moveTo(tailBaseX - 15, bY + bHeight - 5);
+                ctx.quadraticCurveTo(tailBaseX, mouthY - 10, tailBaseX + 25, mouthY - 10); // Point
+                ctx.quadraticCurveTo(tailBaseX + 15, bY + bHeight + 15, tailBaseX + 15, bY + bHeight - 5);
+            } else {
+                // Tail points UP to mouth
+                ctx.moveTo(tailBaseX - 15, bY + 5);
+                ctx.quadraticCurveTo(tailBaseX, mouthY + 10, tailBaseX + 25, mouthY + 10);
+                ctx.quadraticCurveTo(tailBaseX + 15, bY - 15, tailBaseX + 15, bY + 5);
+            }
+            ctx.fillStyle = mainGrad;
+            ctx.fill();
+
+            // --- Highlight (Gloss) ---
+            ctx.shadowColor = 'transparent';
+            const highlightHeight = bHeight * 0.45;
+            ctx.beginPath();
+            ctx.roundRect(bX + 5, bY + 5, bWidth - 10, highlightHeight, {
+                topLeft: cornerRadius - 5, topRight: cornerRadius - 5, bottomLeft: 10, bottomRight: 10
+            });
+            let highlightGrad = ctx.createLinearGradient(bX, bY, bX, bY + highlightHeight);
+            highlightGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)'); 
+            highlightGrad.addColorStop(1, 'rgba(255, 255, 255, 0.1)');
+            ctx.fillStyle = highlightGrad;
+            ctx.fill();
+
+            // --- Border ---
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'rgba(100, 200, 255, 0.6)';
+            ctx.stroke(); // Draws stroke for whatever path is active (the gloss), which is wrong. 
+            // Fix: Re-add path for border
+            ctx.beginPath();
+            ctx.roundRect(bX, bY, bWidth, bHeight, cornerRadius);
+            ctx.stroke();
+
+            ctx.restore();
+
+            // --- Text ---
+            ctx.fillStyle = '#003f5c'; 
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.shadowColor = 'rgba(255,255,255,1)';
+            ctx.shadowBlur = 4;
+
+            // Use the calculated center of the bubble for text X
+            const textCenterX = bX + (bWidth / 2);
+            const totalTextHeight = lines.length * lineHeight;
+            const startTextY = bY + (bHeight - totalTextHeight)/2 + 2;
+
+            for (let k = 0; k < lines.length; k++) {
+                ctx.fillText(lines[k], textCenterX, startTextY + (k * lineHeight));
+            }
+        }
+
+        // --- 4. Speech Logic ---
+        function setupSpeech() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) return;
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
             recognition.continuous = true;
@@ -183,186 +399,68 @@
                 for (let i = event.resultIndex; i < event.results.length; ++i) {
                     if (event.results[i].isFinal) {
                         currentText = event.results[i][0].transcript;
-                        // Auto-clear text after 5 seconds if no new speech
-                        lastSpeechTime = Date.now();
                     } else {
                         interimTranscript += event.results[i][0].transcript;
                     }
                 }
-                if (interimTranscript) {
-                    currentText = interimTranscript;
-                    lastSpeechTime = Date.now();
-                }
+                if (interimTranscript) currentText = interimTranscript;
             };
-
-            recognition.onerror = (event) => {
-                console.warn("Speech error", event.error);
-            };
-
-            recognition.onend = () => {
-                if(isRunning) recognition.start(); // Restart if it stops
-            };
-
+            
+            recognition.onend = () => { if(isRunning && !isRecording) try{recognition.start()}catch(e){} };
             recognition.start();
         }
 
-        // --- 2. The Visual Loop (Real-time Drawing) ---
-        function drawLoop() {
-            if (!isRunning) return;
-
-            // 1. Draw Video Frame
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // 2. Draw Speech Bubble
-            if (currentText && currentText.trim() !== "") {
-                drawSpeechBubble(ctx, currentText, canvas.width / 2, canvas.height - 150);
-            }
-
-            // Loop unless we are in "Capture Mode" (frozen state)
-            if (!isRecording) {
-                animationId = requestAnimationFrame(drawLoop);
-            }
-        }
-
-        // --- 3. Graphics: Drawing the Bubble ---
-        function drawSpeechBubble(ctx, text, x, y) {
-            ctx.font = "bold 30px sans-serif";
-            const maxWidth = 800;
-            const lineHeight = 40;
-            
-            // Text Wrapping
-            const words = text.split(' ');
-            let line = '';
-            let lines = [];
-
-            for(let n = 0; n < words.length; n++) {
-                let testLine = line + words[n] + ' ';
-                let metrics = ctx.measureText(testLine);
-                let testWidth = metrics.width;
-                if (testWidth > maxWidth && n > 0) {
-                    lines.push(line);
-                    line = words[n] + ' ';
-                } else {
-                    line = testLine;
-                }
-            }
-            lines.push(line);
-
-            // Bubble Dimensions
-            const padding = 20;
-            const bubbleWidth = Math.min(ctx.measureText(text).width + (padding*2), maxWidth + (padding*2)); // rough est
-            // Better width calc based on longest line
-            let maxLineWidth = 0;
-            lines.forEach(l => {
-                let w = ctx.measureText(l).width;
-                if(w > maxLineWidth) maxLineWidth = w;
-            });
-            
-            const bWidth = maxLineWidth + (padding * 2);
-            const bHeight = (lines.length * lineHeight) + (padding * 2);
-            const bX = x - (bWidth / 2);
-            const bY = y - bHeight; // Grow upwards
-
-            // Draw Bubble Background
-            ctx.beginPath();
-            ctx.roundRect(bX, bY, bWidth, bHeight, 20);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-            ctx.fill();
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = '#000';
-            ctx.stroke();
-
-            // Draw Triangle tail
-            ctx.beginPath();
-            ctx.moveTo(x, bY + bHeight);
-            ctx.lineTo(x - 15, bY + bHeight + 20);
-            ctx.lineTo(x + 15, bY + bHeight);
-            ctx.fill();
-            ctx.stroke();
-
-            // Draw Text
-            ctx.fillStyle = '#000';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-
-            for (let k = 0; k < lines.length; k++) {
-                ctx.fillText(lines[k], x, bY + padding + (k * lineHeight));
-            }
-        }
-
-        // --- 4. Recording Logic (Photo with Audio) ---
+        // --- 5. Recording Logic ---
         function captureMoment() {
             if (isRecording) return;
             isRecording = true;
+            
+            // Stop FaceMesh sending to canvas temporarily (freeze visual)
+            // But we keep the last frame on canvas
+            if(recognition) recognition.stop();
+
             btnCapture.innerHTML = "Recording Audio...";
             btnCapture.classList.add("pulse");
-            statusMsg.innerText = "Capturing photo + recording audio...";
+            statusMsg.innerText = "Processing Capture...";
 
-            // 1. Freeze the visual (Stop the draw loop)
-            cancelAnimationFrame(animationId);
-            // We do NOT clear the canvas. It now holds the "Photo" with the speech bubble.
-
-            // 2. Setup Recording Stream
-            // We need a stream that combines the Canvas (Video track) + Microphone (Audio track)
-            const canvasStream = canvas.captureStream(30); // 30 FPS
+            // Combine Canvas Stream + Audio Stream
+            const canvasStream = canvas.captureStream(30); 
             const audioTrack = stream.getAudioTracks()[0];
-            canvasStream.addTrack(audioTrack);
+            if(audioTrack) canvasStream.addTrack(audioTrack);
 
             recordedChunks = [];
-            // Use webm as it is standard. naming it mp4 is risky but possible in some contexts, but let's stick to safe types.
-            const options = { mimeType: 'video/webm; codecs=vp9,opus' }; 
-            
-            try {
-                mediaRecorder = new MediaRecorder(canvasStream, options);
-            } catch (e) {
-                // Fallback for Safari/others
-                mediaRecorder = new MediaRecorder(canvasStream);
-            }
+            let options = { mimeType: 'video/webm; codecs=vp9,opus' };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) options = { mimeType: 'video/webm' };
 
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    recordedChunks.push(event.data);
-                }
-            };
-
+            mediaRecorder = new MediaRecorder(canvasStream, options);
+            mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
             mediaRecorder.onstop = saveVideo;
-
-            // Start Recording
             mediaRecorder.start();
 
-            // Stop automatically after 5 seconds (simulating a photo-moment with audio context)
-            setTimeout(() => {
-                stopCapture();
-            }, 5000);
+            setTimeout(() => { stopCapture(); }, 5000);
         }
 
         function stopCapture() {
-            mediaRecorder.stop();
+            if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
             btnCapture.classList.remove("pulse");
-            btnCapture.innerHTML = "Processing...";
-            isRecording = false;
+            btnCapture.innerHTML = "Processing File...";
         }
 
         function saveVideo() {
             const blob = new Blob(recordedChunks, { type: 'video/webm' });
             const url = URL.createObjectURL(blob);
-            
-            // Create download link
             const a = document.createElement('a');
             document.body.appendChild(a);
             a.style = 'display: none';
             a.href = url;
-            a.download = 'speech-bubble-moment.webm'; // WebM is safest for browser generation
+            a.download = `AeroMoment_${Date.now()}.webm`; 
             a.click();
             window.URL.revokeObjectURL(url);
 
-            // Resume the app
-            statusMsg.innerText = "Saved! Resuming live feed...";
-            btnCapture.innerHTML = "📸 Capture Moment";
-            btnCapture.disabled = false;
-            
-            // Resume Drawing
-            drawLoop();
+            statusMsg.innerText = "Saved. Resuming...";
+            btnCapture.innerHTML = "📸 Capture Aero Moment";
+            isRecording = false;
+            if(recognition) try{recognition.start()}catch(e){}
         }
 
     </script>
